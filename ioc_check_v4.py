@@ -1,13 +1,15 @@
+#!/usr/bin/env python3
+
 import csv
 import requests
-import socket
 import ipaddress
+import argparse
 
 def is_valid_ip(ip_address):
     try:
-        socket.inet_aton(ip_address)
+        ipaddress.IPv4Address(ip_address)
         return True
-    except socket.error:
+    except ipaddress.AddressValueError:
         return False
 
 def is_private_ip(ip_address):
@@ -18,17 +20,14 @@ def is_private_ip(ip_address):
         return False
 
 def load_exit_nodes():
-    url = "https://check.torproject.org/exit-addresses"
+    url = "https://check.torproject.org/torbulkexitlist"
     response = requests.get(url)
     exit_nodes = []
 
     lines = response.text.split('\n')
     for line in lines:
-        if line.startswith('ExitAddress'):
-            parts = line.split(' ')
-            if len(parts) >= 2:
-                exit_nodes.append(parts[1])
-
+        exit_nodes.append(line)
+ 
     return exit_nodes
 
 def is_tor_exit_node(ip_address, exit_nodes):
@@ -41,17 +40,39 @@ def check_tor_exit_nodes(csv_file):
         reader = csv.reader(file)
         ip_addresses = [row[0] for row in reader]
 
+    filtered = []
+    true_iocs = []
+
     for ip_address in ip_addresses:
         if is_valid_ip(ip_address):
             if not is_private_ip(ip_address):
                 if is_tor_exit_node(ip_address, exit_nodes):
+                    filtered.append((ip_address, "Tor node"))
                     print(f"{ip_address} is a Tor exit node relay.")
                 else:
-                    print(f"{ip_address} is not a Tor exit node relay.")
+                    true_iocs.append(ip_address)
             else:
+                filtered.append((ip_address, "private IP"))
                 print(f"{ip_address} is a private IP address and will not be checked.")
         else:
+            filtered.append((ip_address, "invalid IP"))
             print(f"{ip_address} is not a valid IP address.")
 
-# Beispielaufruf
-check_tor_exit_nodes('ip_addresses.csv')
+    with open(f"{csv_file}_filtered", 'w') as file:
+        for line in true_iocs:
+            file.write(f"{line}\n")
+
+    with open(f"{csv_file}_removed", 'w') as file:
+        for line in filtered:
+            file.write(f"{line[0]}\t{line[1]}\n")
+
+# Argument parser
+parser = argparse.ArgumentParser(
+    prog='ioc check',
+    description='Check a list of IoCs for TOR addresses',
+)
+parser.add_argument('ioclist')
+args = parser.parse_args()
+
+# main call
+check_tor_exit_nodes(args.ioclist)
